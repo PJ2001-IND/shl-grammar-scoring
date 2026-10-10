@@ -241,7 +241,7 @@ base["D_features_gbm"]   = cv_oof(gbm,   Xb_tr, yk, Xb_te); FIT["D_features_gbm"
 if have("features/text_emb.npz"):
     z = np.load("features/text_emb.npz"); Xc_tr, Xc_te = align(z["keys"], z["X"], tr_keys)[ok_tr], align(z["keys"], z["X"], te_keys)
     base["C_mpnet_ridge"] = cv_oof(ridge, Xc_tr, yk, Xc_te); FIT["C_mpnet_ridge"] = (ridge, Xc_tr)
-DEB = [s for s in ("", "_s7", "_s2026") if have(f"features/deberta_oof{s}.npy")]  # fine-tuning seeds, averaged
+DEB = [s for s in ("",) if have(f"features/deberta_oof{s}.npy")]  # one fine-tuning seed; averaging seed 7 in did not help the stack (see "Tested and rejected")
 if DEB:
     deb = lambda part: np.mean([np.load(f"features/deberta_{part}{s}.npy") for s in DEB], 0)
     base["F_deberta_finetuned"] = (deb("oof")[ok_tr], deb("test"))
@@ -419,7 +419,8 @@ md("""
   away. The zero-shot LLM judge on those transcripts agrees better with the raters (r 0.528 vs 0.506), but neither
   the judge's states nor disfluency counts (`src/verbatim_features.py`) improved the stack beyond noise
   (test-mix nested CV 0.5039 -> 0.5030), because the speech models already capture fluency. Also rejected:
-  per-batch centring of the speech embeddings and importance-weighted training of the base models (both worse).
+  per-batch centring of the speech embeddings and importance-weighted training of the base models (both worse), and averaging a second DeBERTa
+  fine-tuning seed (DeBERTa alone 0.607 -> 0.593, but stack 0.4676 -> 0.4673 and test-mix 0.5039 -> 0.5046).
 * **Removed for licensing:** grammatical-error-correction edit rates from CoEdIT-large. Its weights are
   CC-BY-NC, and competition rule 6c requires licences that allow commercial use; dropping them cost 0.001 RMSE.
 * **Robustness** (`tests/robustness_check.py`): quiet microphone, white noise at 20/10 dB SNR, telephone-band

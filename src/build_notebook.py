@@ -414,6 +414,12 @@ md("""
   `src/linguistic_features.py`). They correlate only weakly with the score (|r| ≤ 0.25), partly because the
   ASR's punctuation decides what counts as a "sentence", and adding them to the text+prosody model did not
   lower CV RMSE (0.627 vs 0.623), so they are not used.
+* **Tested and rejected, verbatim transcription:** Whisper re-run with a disfluent prompt
+  (`VERBATIM=1 src/transcribe.py`) keeps repetitions, false starts and self-corrections that it otherwise tidies
+  away. The zero-shot LLM judge on those transcripts agrees better with the raters (r 0.528 vs 0.506), but neither
+  the judge's states nor disfluency counts (`src/verbatim_features.py`) improved the stack beyond noise
+  (test-mix nested CV 0.5039 -> 0.5030), because the speech models already capture fluency. Also rejected:
+  per-batch centring of the speech embeddings and importance-weighted training of the base models (both worse).
 * **Removed for licensing:** grammatical-error-correction edit rates from CoEdIT-large. Its weights are
   CC-BY-NC, and competition rule 6c requires licences that allow commercial use; dropping them cost 0.001 RMSE.
 * **Robustness** (`tests/robustness_check.py`): quiet microphone, white noise at 20/10 dB SNR, telephone-band

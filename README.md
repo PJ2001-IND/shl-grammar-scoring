@@ -92,6 +92,7 @@ Re-running the notebook reproduces `submission.csv` byte for byte.
 | `text_features.py` | LanguageTool, fluency, complexity, GPT-2 features |
 | `gec_features.py` | CoEdIT grammatical-error-correction edit rates (not used: CC-BY-NC licence, see rule 6c) |
 | `linguistic_features.py` | spaCy syntax / disfluency features (tested; did not improve CV, not used) |
+| `verbatim_features.py` | disfluencies from verbatim transcripts (`VERBATIM=1`; tested, gain within noise, not used) |
 | `text_embed.py` | sentence-transformer embedding |
 | `llm_judge.py` | rubric-prompted LLM: score distribution + hidden states |
 | `finetune_text.py` | DeBERTa-v3 regression, 5-fold (resumable; `SEED=` for extra seeds) |

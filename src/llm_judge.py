@@ -10,7 +10,7 @@ transcript. From that one forward pass we keep:
    (1/4, 1/2, 3/4, last layer). The LLM has read the rubric before the transcript,
    so these states are "grammar-aware"; a ridge on top is trained later with CV.
 
-Usage: python src/llm_judge.py [mlx model id]
+Usage: python src/llm_judge.py [mlx model id]     (VERBATIM=1: judge the verbatim transcripts)
 Writes features/llm_<model>.csv (judge) and features/llm_<model>_emb.npz (embeddings)
 """
 import json, os, sys
@@ -89,9 +89,10 @@ def judge_table(LP):
 
 if __name__ == "__main__":
     MODEL = sys.argv[1] if len(sys.argv) > 1 else MODEL
-    NAME = MODEL.split("/")[-1]
+    VERB = os.environ.get("VERBATIM") == "1"  # judge the verbatim transcripts -> features/llm_<model>_verbatim*
+    NAME = MODEL.split("/")[-1] + ("_verbatim" if VERB else "")
     CKPT = f"features/llm_{NAME}.partial.npz"
-    rows = [json.loads(l) for l in open("features/transcripts.jsonl")][:int(os.environ.get("LIMIT", 10**9))]  # LIMIT: smoke test
+    rows = [json.loads(l) for l in open("features/transcripts_verbatim.jsonl" if VERB else "features/transcripts.jsonl")][:int(os.environ.get("LIMIT", 10**9))]  # LIMIT: smoke test
     keys, LP, E = [], [], []
     if os.path.exists(CKPT):
         z = np.load(CKPT); keys, LP, E = list(z["keys"]), list(z["lp"]), list(z["emb"])

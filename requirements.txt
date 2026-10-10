@@ -1,0 +1,25 @@
+# Python 3.12, Apple Silicon (MLX is used for Whisper and the LLM judge)
+numpy==2.5.3
+pandas==3.0.6
+scipy==1.18.1
+scikit-learn==1.9.1
+soundfile==0.14.0
+praat-parselmouth==0.4.7
+torch==2.14.1
+transformers==5.19.0
+sentencepiece==0.2.2
+sentence-transformers==6.1.0
+huggingface-hub==1.33.0
+mlx==0.32.3
+mlx-lm==0.32.0
+mlx-whisper==0.4.3
+language-tool-python==3.4.0   # needs Java >= 17
+matplotlib==3.11.2
+seaborn==0.13.2
+nbformat==5.11.1
+nbconvert==7.17.1
+ipykernel==7.4.0
+spacy==3.8.16
+wordfreq==3.1.1
+# python -m spacy download en_core_web_sm
+pytest==9.1.1

@@ -153,7 +153,9 @@ def test_scorer_bundle_matches_training_features():
          "E_llm_states_ridge": align(z["keys"], z["X"], te_keys)[:, S["llm_layer"]].astype(np.float32)}
     g = np.load("features/whisper_enc.npz")
     X["G_whisper_enc_svr"] = align(g["keys"], g["X"], te_keys)[:, S["whisper_lo"]:].reshape(len(te_keys), -1).astype(np.float32)
-    p = np.clip(np.column_stack([S["models"][n].predict(X[n]) for n in S["names"]]) @ S["weights"] + S["intercept"], 0, 5)
+    from model import batch
+    F, g = np.column_stack([S["models"][n].predict(X[n]) for n in S["names"]]), batch(te_keys)
+    p = np.clip(np.select([g == k for k in (0, 1)], [F @ S["weights"][k] + S["intercept"][k] for k in (0, 1)]), 0, 5)
     ref = np.array([S["test_pred"][f] for f in te.filename])
     assert np.corrcoef(p, ref)[0, 1] > 0.98 and np.abs(p - ref).mean() < 0.06
 

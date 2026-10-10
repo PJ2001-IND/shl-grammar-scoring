@@ -44,6 +44,14 @@ def quality_ok(keys):
     return hnr > HNR_GATE
 
 
+def batch(keys):
+    """Recording batch from the clip length: 1 = the batch capped at 45 s, 0 = everything else.
+    That batch is 17% of the intact training clips but 56% of the test clips, and the base models
+    (fitted mostly on 60 s clips) behave differently on it, so the stack fits its own weights there."""
+    d = pd.read_csv("features/prosody_feats.csv").set_index("key").loc[keys, "duration"].values
+    return ((d > 44) & (d < 46)).astype(int)
+
+
 def align(keys_all, X, keys):
     idx = {k: i for i, k in enumerate(keys_all)}
     return X[[idx[k] for k in keys]]
@@ -87,21 +95,28 @@ def cv_oof(make, X, y, Xte):
     return oof.mean(0), te / n
 
 
-def stack(oofs, tes, y):
-    """Non-negative weights + intercept fitted on OOF predictions."""
-    A = np.column_stack(oofs); mu = y.mean()
-    w, _ = nnls(A - A.mean(0), y - mu)
-    b = mu - A.mean(0) @ w
-    return w, b, np.clip(A @ w + b, 0, 5), np.clip(np.column_stack(tes) @ w + b, 0, 5)
+def stack(oofs, tes, y, g=None, g_te=None):
+    """Non-negative weights + intercept fitted on OOF predictions. With recording-batch labels
+    g (training rows) and g_te (test rows), a separate set is fitted per batch; then the weights
+    and intercepts are returned as {batch: value} dicts."""
+    A, T = np.column_stack(oofs), np.column_stack(tes)
+    if g is None:
+        mu = y.mean(); w, _ = nnls(A - A.mean(0), y - mu); b = mu - A.mean(0) @ w
+        return w, b, np.clip(A @ w + b, 0, 5), np.clip(T @ w + b, 0, 5)
+    W, B0, fit, pred = {}, {}, np.zeros(len(y)), np.zeros(len(T))
+    for k in np.unique(g):
+        r, rt = g == k, g_te == k
+        W[k], B0[k], fit[r], pred[rt] = stack([A[r][:, j] for j in range(A.shape[1])], [T[rt][:, j] for j in range(T.shape[1])], y[r])
+    return W, B0, fit, pred
 
 
-def stack_cv(oofs, y):
+def stack_cv(oofs, y, g=None):
     """Honest stack estimate: stack weights refitted inside each fold (nested), so the
     reported stack RMSE does not benefit from fitting weights on the evaluated rows."""
     A = np.column_stack(oofs); out = np.zeros((N_REPEATS, len(y)))
     for i, (a, b) in enumerate(RepeatedKFold(n_splits=N_SPLITS, n_repeats=N_REPEATS, random_state=SEED + 1).split(A)):
-        w, b0, _, p = stack([A[a][:, j] for j in range(A.shape[1])], [A[b][:, j] for j in range(A.shape[1])], y[a])
-        out[i // N_SPLITS, b] = p
+        cols = lambda X: [X[:, j] for j in range(X.shape[1])]
+        out[i // N_SPLITS, b] = stack(cols(A[a]), cols(A[b]), y[a], None if g is None else g[a], None if g is None else g[b])[3]
     return out.mean(0)
 
 

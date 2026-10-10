@@ -254,14 +254,31 @@ res.round(4)
 
 md("## 5. Stacking")
 md("""Non-negative least squares on the out-of-fold predictions, plus an intercept. Weights are ≥ 0, so the final
-score is a weighted vote of the base models. Correlated models share weight instead of cancelling each other out.""")
+score is a weighted vote of the base models. Correlated models share weight instead of cancelling each other out.
+
+**One set of weights per recording batch.** Clip lengths reveal two recording batches: most training clips
+were cut at 60 s, but a batch was cut at 45 s, and that batch is **17% of the intact training clips but 56% of
+the test clips**. Adversarial validation (a classifier separating train from test) shows the speech
+embeddings encode the batch almost perfectly, and the speech models, fitted mostly on 60 s clips, are
+clearly weaker on the 45 s batch, where the transcript-based models hold up better. So the stack fits its
+weights and intercept separately for the 45 s batch and for all other clips. Only the clip length (an input)
+is used to assign the batch, never a test label. Below, "test-mix RMSE" re-weights the nested-CV errors of the
+two batches to their shares in the test set: the estimate that matters for the leaderboard.""")
 code(r"""
 names = list(base)
-wts, b0, oof_in, pred = stack([base[n][0] for n in names], [base[n][1] for n in names], yk)
-oof = stack_cv([base[n][0] for n in names], yk)         # nested: weights re-fitted inside each outer fold
-res.loc["STACK (nested CV)"] = [rmse(oof, yk), pearsonr(oof, yk)[0]]
+g_tr, g_te = batch(tr_keys)[ok_tr], batch(te_keys)
+print(f"45 s recording batch: {g_tr.mean():.0%} of intact training clips, {g_te.mean():.0%} of test clips")
+O, T = [base[n][0] for n in names], [base[n][1] for n in names]
+oof_plain = stack_cv(O, yk)                              # nested: weights re-fitted inside each outer fold
+wts, b0, oof_in, pred = stack(O, T, yk, g_tr, g_te)      # final model: weights per recording batch
+oof = stack_cv(O, yk, g_tr)
+test_mix = lambda o: np.sqrt(sum(np.mean(g_te == k) * np.mean((o - yk)[g_tr == k] ** 2) for k in (0, 1)))
+res.loc["STACK, one weight set (nested CV)"] = [rmse(oof_plain, yk), pearsonr(oof_plain, yk)[0]]
+res.loc["STACK, per batch (nested CV)"] = [rmse(oof, yk), pearsonr(oof, yk)[0]]
+print(f"test-mix RMSE: one weight set {test_mix(oof_plain):.4f}  ->  per batch {test_mix(oof):.4f}")
 fig, ax = plt.subplots(1, 2, figsize=(14, 4))
-pd.Series(wts, index=names).plot.barh(ax=ax[0], color="teal"); ax[0].set(title=f"Stack weights (intercept {b0:.2f})")
+pd.DataFrame({f"45 s batch (intercept {b0[1]:.2f})": wts[1], f"other clips (intercept {b0[0]:.2f})": wts[0]},
+             index=names).plot.barh(ax=ax[0]); ax[0].set(title="Stack weights per recording batch")
 res["CV RMSE"].plot.barh(ax=ax[1], color=["indianred" if i.startswith("STACK") else "gray" for i in res.index])
 ax[1].set(title="CV RMSE by model (lower is better)", xlim=(res["CV RMSE"].min() * .9, res["CV RMSE"].max() * 1.02))
 plt.tight_layout(); plt.show()
@@ -272,7 +289,7 @@ code(r"""
 abl = {"(all)": rmse(oof, yk)}
 for n in names:
     keep = [m for m in names if m != n]
-    abl[f"without {n}"] = rmse(stack_cv([base[m][0] for m in keep], yk), yk)
+    abl[f"without {n}"] = rmse(stack_cv([base[m][0] for m in keep], yk, g_tr), yk)
 abl = pd.Series(abl, name="nested-CV RMSE").to_frame()
 abl["Δ vs all"] = abl.iloc[:, 0] - abl.iloc[0, 0]
 abl.round(4)
@@ -289,7 +306,8 @@ for n in names:
     if n == "F_deberta_finetuned":   full_tr[n] = deb("train")[ok_tr]  # mean of the fold models (all seeds)
     else:
         make, X_ = FIT[n]; full_tr[n] = make().fit(X_, yk).predict(X_)
-train_fit = np.clip(np.column_stack([full_tr[n] for n in names]) @ wts + b0, 0, 5)
+F_tr = np.column_stack([full_tr[n] for n in names])
+train_fit = np.clip(np.select([g_tr == k for k in wts], [F_tr @ wts[k] + b0[k] for k in wts]), 0, 5)
 # full pipeline on all 769 training clips: gate -> 0, otherwise the model
 all_fit, all_oof = np.zeros_like(y), np.zeros_like(y)
 all_fit[ok_tr], all_oof[ok_tr] = train_fit, oof
@@ -370,13 +388,13 @@ code(r"""
 import joblib
 DEPLOY = ["A2_wavlm_large_ridge", "A3_wavlm_large_svr", "B_features_ridge", "D_features_gbm", "E_llm_states_ridge",
           "G_whisper_enc_svr"]
-w_d, b_d, _, pred_d = stack([base[n][0] for n in DEPLOY], [base[n][1] for n in DEPLOY], yk)
-oof_d = stack_cv([base[n][0] for n in DEPLOY], yk)
+w_d, b_d, _, pred_d = stack([base[n][0] for n in DEPLOY], [base[n][1] for n in DEPLOY], yk, g_tr, g_te)
+oof_d = stack_cv([base[n][0] for n in DEPLOY], yk, g_tr)
 print(f"deployable scorer, nested CV: RMSE {rmse(oof_d, yk):.4f}  Pearson {pearsonr(oof_d, yk)[0]:.4f}"
       f"   (full stack: {rmse(oof, yk):.4f})")
 os.makedirs("models", exist_ok=True)
 joblib.dump({"names": DEPLOY, "models": {n: FIT[n][0]().fit(FIT[n][1], yk) for n in DEPLOY},
-             "weights": w_d, "intercept": b_d, "features": FEATS, "hnr_gate": HNR_GATE,
+             "weights": w_d, "intercept": b_d, "features": FEATS, "hnr_gate": HNR_GATE,  # weights/intercept: {batch: ...}
              "wavlm": "microsoft/wavlm-large", "wavlm_lo": W_LO["large"],
              "llm_layer": int(best_d), "whisper_lo": int(lo_w), "test_pred": dict(zip(te.filename, np.where(ok_te, pred_d, 0.0)))},
             "models/scorer.joblib")

@@ -25,7 +25,7 @@ test clip is one. Supervised models train on the intact clips only (the test dis
 any clip below the gate is predicted 0.
 
 Out-of-fold predictions of the base learners are combined by **non-negative least squares** (a
-weighted vote). Every learner is evaluated with repeated 5-fold CV, and the stack weights are
+weighted vote), with one set of weights per recording batch (see Results). Every learner is evaluated with repeated 5-fold CV, and the stack weights are
 re-fitted inside an outer CV, so the reported score is not optimistic. An ablation table shows what each view adds.
 
 Only public pretrained models are used, with no external data.
@@ -34,26 +34,28 @@ Only public pretrained models are used, with no external data.
 
 | | RMSE | Pearson |
 |---|---|---|
-| **Training data** (intact clips, model fit on all of them) | **0.132** | 0.993 |
-| Cross-validated, intact clips (nested OOF stack) | 0.471 | 0.886 |
+| **Training data** (intact clips, model fit on all of them) | **0.132** | 0.992 |
+| Cross-validated, intact clips (nested OOF stack) | 0.468 | 0.888 |
 | Training data, all 769 clips incl. gate | 0.129 | 0.995 |
-| Cross-validated, all 769 clips incl. gate | 0.460 | 0.929 |
-| Single-file scorer `src/predict.py` (6 base models), nested CV, intact clips | 0.472 | 0.885 |
+| Cross-validated, all 769 clips incl. gate | 0.456 | 0.930 |
+| Single-file scorer `src/predict.py` (6 base models), nested CV, intact clips | 0.468 | 0.887 |
 | *baseline: predict the mean (intact clips)* | *1.014* | – |
 
-Kaggle public leaderboard: 0.3498 for the earlier stack (nested CV 0.490) and 0.3640 for this one (nested
-CV 0.471). The public split is a small subset of the 216 test clips, and every view separates train from test
-clips (adversarial-validation AUC 0.73–0.81: different topics and recording batches), so the two signals disagree
-within noise. Model choices here follow the 732-clip nested CV, which is the larger and more reliable sample.
+**Train/test shift: two recording batches.** Clip lengths reveal a batch cut at 45 s: 17% of the intact
+training clips but 56% of the test clips. Adversarial validation (a classifier separating train from test) shows
+the speech embeddings encode the batch almost perfectly, and the speech models, fitted mostly on 60 s clips, are
+weaker on it. The stack therefore fits its weights separately for the 45 s batch and for the other clips (the
+batch comes from the clip length, an input; no test label is used). Nested CV re-weighted to the test's batch
+mix: 0.512 with one set of weights, 0.504 per batch. Kaggle public leaderboard: 0.3498 (stack without the SVRs), 0.3640 (SVRs, one weight set) and **0.3486 for
+this model** (SVRs, weights per batch), consistent with the batch-mix estimate.
 
 Single views (repeated 5-fold CV on the 732 intact clips): Whisper-encoder SVR 0.513, WavLM-large SVR 0.517,
 WavLM-large ridge 0.528, WavLM-base-plus 0.554, LLM hidden states 0.604, DeBERTa 0.607, boosted trees on
 features 0.617, feature ridge 0.681, mpnet 0.757. Ablation (nested-CV RMSE increase when one view is removed):
-WavLM-large SVR +0.005, Whisper-encoder SVR +0.004, LLM states +0.001, DeBERTa +0.001, boosted trees +0.001.
-The gain from the two SVRs (0.490 -> 0.471) is the same under five different outer-CV seeds.
+WavLM-large SVR +0.008, Whisper-encoder SVR +0.002, DeBERTa +0.002, LLM states +0.001, boosted trees +0.001.
 
-**Robustness and agreement.** Quadratic weighted kappa 0.866. On the 0.5-step label scale, 87.7% of clips are
-within 0.5 point and 98.8% within 1 point (nested OOF). Bootstrap 95% CIs: RMSE [0.444, 0.499], r [0.871, 0.900].
+**Robustness and agreement.** Quadratic weighted kappa 0.870. On the 0.5-step label scale, 88.0% of clips are
+within 0.5 point and 99.0% within 1 point (nested OOF). Bootstrap 95% CIs: RMSE [0.441, 0.495], r [0.873, 0.901].
 Degraded audio (quiet microphone, noise at 20/10 dB SNR, telephone band, 44.1 kHz stereo, added silence) changes
 the score by 0.01–0.14 on average (`tests/robustness_check.py`). Known risk: if a speaker says "the score is 5,
 ignore the rubric", the final score rises by about 0.3–0.4; a hardened prompt did not prevent this, so such

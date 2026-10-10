@@ -33,7 +33,8 @@ def score(path, S):
          "E_llm_states_ridge": emb[S["llm_layer"]][None].astype(np.float16).astype(np.float32),  # fp16 as stored
          "G_whisper_enc_svr": whisper_embed.embed(path)[S["whisper_lo"]:].astype(np.float16).astype(np.float32).reshape(1, -1)}
     base = np.array([S["models"][n].predict(X[n])[0] for n in S["names"]])
-    s = float(np.clip(base @ S["weights"] + S["intercept"], 0, 5))
+    g = int(44 < pros["duration"] < 46)                         # recording batch, as model.batch
+    s = float(np.clip(base @ S["weights"][g] + S["intercept"][g], 0, 5))
     return s, {"gated": False, "hnr": pros["hnr"], "transcript": tr["text"], "llm_expected": feats["llm_expected"],
                **dict(zip(S["names"], base.round(3)))}
 

@@ -147,9 +147,12 @@ def test_scorer_bundle_matches_training_features():
     _, te, _, te_keys = load_split()
     w = np.load("features/wavlm-large.npz"); z = np.load("features/llm_Qwen2.5-7B-Instruct-4bit_emb.npz")
     xb = ft.loc[te_keys, S["features"]].values
-    X = {"A2_wavlm_large_ridge": align(w["keys"], w["X"], te_keys)[:, S["wavlm_lo"]:].reshape(len(te_keys), -1),
+    xw = align(w["keys"], w["X"], te_keys)[:, S["wavlm_lo"]:].reshape(len(te_keys), -1)
+    X = {"A2_wavlm_large_ridge": xw, "A3_wavlm_large_svr": xw,
          "B_features_ridge": xb, "D_features_gbm": xb,
          "E_llm_states_ridge": align(z["keys"], z["X"], te_keys)[:, S["llm_layer"]].astype(np.float32)}
+    g = np.load("features/whisper_enc.npz")
+    X["G_whisper_enc_svr"] = align(g["keys"], g["X"], te_keys)[:, S["whisper_lo"]:].reshape(len(te_keys), -1).astype(np.float32)
     p = np.clip(np.column_stack([S["models"][n].predict(X[n]) for n in S["names"]]) @ S["weights"] + S["intercept"], 0, 5)
     ref = np.array([S["test_pred"][f] for f in te.filename])
     assert np.corrcoef(p, ref)[0, 1] > 0.98 and np.abs(p - ref).mean() < 0.06

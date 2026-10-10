@@ -20,8 +20,10 @@ run features/prosody_feats.csv src/prosody_features.py
 (
   run features/wavlm-base-plus.npz src/audio_embed.py
   run features/wavlm-large.npz src/audio_embed.py microsoft/wavlm-large
+  run features/whisper_enc.npz src/whisper_embed.py
   run features/llm_Qwen2.5-7B-Instruct-4bit.csv src/llm_judge.py
   run features/deberta_oof.npy src/finetune_text.py
+  for s in 7 2026; do [ -e features/deberta_oof_s$s.npy ] || SEED=$s $PY src/finetune_text.py; done  # extra seeds, averaged
 ) & gpu=$!
 (
   $PY src/text_features.py  # incremental: only clips not yet in the CSV

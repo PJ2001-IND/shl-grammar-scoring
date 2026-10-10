@@ -16,7 +16,9 @@ from sklearn.model_selection import KFold
 from transformers import AutoTokenizer, AutoModel, get_cosine_schedule_with_warmup
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "microsoft/deberta-v3-base"
-EPOCHS, BS, LR, MAXLEN, SEED = 6, 8, 3e-5, 320, 42
+EPOCHS, BS, LR, MAXLEN = 6, 8, 3e-5, 320
+SEED = int(os.environ.get("SEED", 42))  # extra seeds -> deberta_*_s<seed>.npy, averaged in the notebook
+SUF = "" if SEED == 42 else f"_s{SEED}"
 dev = "mps" if torch.backends.mps.is_available() else "cpu"
 torch.manual_seed(SEED); np.random.seed(SEED)
 
@@ -63,7 +65,13 @@ def predict(m, texts):
 
 
 oof = np.zeros(len(Xtr)); test = np.zeros(len(Xte)); train = np.zeros(len(Xtr))
+CKPT = f"features/deberta_ckpt{SUF}.npz"  # finished folds survive a crash (e.g. GPU out of memory)
+done = 0
+if os.path.exists(CKPT):
+    z = np.load(CKPT); oof, test, train, done = z["oof"], z["test"], z["train"], int(z["done"])
 for k, (a, b) in enumerate(KFold(5, shuffle=True, random_state=SEED).split(ok)):
+    if k < done:
+        continue
     a, b = ok[a], ok[b]  # fold positions -> training-set rows
     m = Reg().to(dev)
     params = [{"params": m.enc.parameters(), "lr": LR}, {"params": m.head.parameters(), "lr": 1e-3}]
@@ -82,7 +90,9 @@ for k, (a, b) in enumerate(KFold(5, shuffle=True, random_state=SEED).split(ok)):
     # use the final epoch (fixed schedule; no peeking at the validation fold for model selection)
     oof[b] = p * 5; test += predict(m, Xte) * 5 / 5; train += predict(m, Xtr) * 5 / 5
     del m, opt; torch.mps.empty_cache() if dev == "mps" else None
+    np.savez(CKPT, oof=oof, test=test, train=train, done=k + 1)
 
-np.save("features/deberta_oof.npy", oof); np.save("features/deberta_test.npy", test); np.save("features/deberta_train.npy", train)
+np.save(f"features/deberta_oof{SUF}.npy", oof); np.save(f"features/deberta_test{SUF}.npy", test); np.save(f"features/deberta_train{SUF}.npy", train)
+os.remove(CKPT)
 yy = tr.label.values[ok]; o = oof[ok]
 print("DeBERTa OOF RMSE (intact clips)", np.sqrt(np.mean((np.clip(o, 0, 5) - yy) ** 2)), "r", np.corrcoef(o, yy)[0, 1])

@@ -1,7 +1,8 @@
 """Final model: several base regressors + a non-negative linear stack.
 
 Base models (each evaluated with repeated 5-fold CV, out-of-fold predictions):
-  A. Ridge on WavLM mean-pooled embeddings (best layer chosen by CV) - acoustic/fluency cues
+  A. Ridge on WavLM mean-pooled embeddings (upper 3/4 of layers) - acoustic/fluency cues
+  A3. RBF-kernel SVR on the same WavLM-large embedding - non-linear acoustic patterns
   B. Ridge on interpretable features (grammar-error rates, LLM rubric
      score, fluency, prosody, ASR confidence)
   C. Ridge on sentence-transformer embeddings of the transcript - lexical/syntactic content
@@ -20,6 +21,7 @@ from sklearn.model_selection import RepeatedKFold
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.svm import SVR
 
 D = "Dataset_Final"
 N_SPLITS, N_REPEATS, SEED = 5, 3, 42
@@ -63,6 +65,11 @@ def rmse(a, b):
 
 def ridge():
     return make_pipeline(StandardScaler(), RidgeCV(alphas=np.logspace(-2, 5, 30)))
+
+
+def svr():
+    """RBF-kernel support-vector regression: a non-linear learner for the speech embeddings."""
+    return make_pipeline(StandardScaler(), SVR(C=3, epsilon=0.1, gamma="scale"))
 
 
 def gbm():

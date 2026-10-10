@@ -78,7 +78,7 @@ from scipy.stats import pearsonr
 from IPython.display import display
 warnings.filterwarnings("ignore")
 sys.path.insert(0, "src")
-from model import *   # load_split, quality_ok, align, feature_table, ridge, gbm, cv_oof, stack, stack_cv, rmse
+from model import *   # load_split, quality_ok, align, feature_table, ridge, svr, gbm, cv_oof, stack, stack_cv, rmse
 
 sns.set_theme(style="whitegrid")
 tr, te, tr_keys, te_keys = load_split()
@@ -187,7 +187,10 @@ md("## 4. Base models (repeated 5-fold CV, out-of-fold predictions)")
 md("""**A. WavLM layers.** Each transformer layer encodes different information (lowest layers: raw acoustics;
 middle/upper layers: phonetic and word-level structure). The curve below scores each layer alone. The base
 model concatenates every layer above the lowest quarter (a fixed rule, not tuned per layer), so ridge can
-weight information from all depths.""")
+weight information from all depths. **A3** fits an RBF-kernel SVR to the same WavLM-large embedding: it
+captures non-linear acoustic patterns the linear ridge misses, and lowered the stack's nested-CV RMSE by
+0.015 (the same gain under five different outer-CV seeds). An SVR on the other views (features, mpnet, LLM
+states, WavLM-base) added nothing, so it is used for WavLM-large only.""")
 code(r"""
 base, FIT, W_LO = {}, {}, {}  # FIT[name] = (model factory, training matrix), used for the training-RMSE refit
 fig, ax = plt.subplots(figsize=(8, 3))
@@ -202,10 +205,24 @@ for tag, name in (("base-plus", "A_wavlm_base_ridge"), ("large", "A2_wavlm_large
     lo = W_LO[tag] = nl // 4
     Xtr_, Xte_ = W_tr[:, lo:].reshape(len(W_tr), -1), W_te[:, lo:].reshape(len(W_te), -1)
     base[name] = cv_oof(ridge, Xtr_, yk, Xte_); FIT[name] = (ridge, Xtr_)
+    if tag == "large":  # A3: non-linear (RBF-kernel SVR) learner on the same embedding
+        base["A3_wavlm_large_svr"] = cv_oof(svr, Xtr_, yk, Xte_); FIT["A3_wavlm_large_svr"] = (svr, Xtr_)
     print(f"WavLM-{tag}: best single layer {int(np.argmin(layer_rmse))} (RMSE {min(layer_rmse):.4f}); "
           f"concatenated layers {lo}-{nl - 1}: RMSE {rmse(np.clip(base[name][0], 0, 5), yk):.4f}")
 ax.set(title="Single-layer CV RMSE by relative depth", xlabel="relative layer depth (0 = CNN output, 1 = top)", ylabel="RMSE"); ax.legend()
 plt.show()
+""")
+md("""**G. Whisper encoder (SVR).** The ASR model's own encoder states (every 4th of 32 blocks, mean-pooled over
+the audio frames; `src/whisper_embed.py`) describe the speech as the recogniser hears it: pronunciation,
+fluency, clarity. The upper 3/4 of the pooled layers are concatenated (same fixed rule as WavLM) and fitted
+with the RBF-kernel SVR. It is the strongest single view; a ridge on it added nothing to the stack.""")
+code(r"""
+if have("features/whisper_enc.npz"):
+    z = np.load("features/whisper_enc.npz"); lo_w = z["X"].shape[1] // 4
+    G_tr = align(z["keys"], z["X"], tr_keys)[ok_tr][:, lo_w:].reshape(ok_tr.sum(), -1).astype(np.float32)
+    G_te = align(z["keys"], z["X"], te_keys)[:, lo_w:].reshape(len(te_keys), -1).astype(np.float32)
+    base["G_whisper_enc_svr"] = cv_oof(svr, G_tr, yk, G_te); FIT["G_whisper_enc_svr"] = (svr, G_tr)
+    print(f"Whisper encoder blocks {z['layers'][lo_w:].tolist()}, SVR: CV RMSE {rmse(np.clip(base['G_whisper_enc_svr'][0], 0, 5), yk):.4f}")
 """)
 md("**E. LLM hidden-state depth selection** (same idea for the rubric-conditioned Qwen states).")
 code(r"""
@@ -224,8 +241,11 @@ base["D_features_gbm"]   = cv_oof(gbm,   Xb_tr, yk, Xb_te); FIT["D_features_gbm"
 if have("features/text_emb.npz"):
     z = np.load("features/text_emb.npz"); Xc_tr, Xc_te = align(z["keys"], z["X"], tr_keys)[ok_tr], align(z["keys"], z["X"], te_keys)
     base["C_mpnet_ridge"] = cv_oof(ridge, Xc_tr, yk, Xc_te); FIT["C_mpnet_ridge"] = (ridge, Xc_tr)
-if have("features/deberta_oof.npy"):
-    base["F_deberta_finetuned"] = (np.load("features/deberta_oof.npy")[ok_tr], np.load("features/deberta_test.npy"))
+DEB = [s for s in ("", "_s7", "_s2026") if have(f"features/deberta_oof{s}.npy")]  # fine-tuning seeds, averaged
+if DEB:
+    deb = lambda part: np.mean([np.load(f"features/deberta_{part}{s}.npy") for s in DEB], 0)
+    base["F_deberta_finetuned"] = (deb("oof")[ok_tr], deb("test"))
+    print(f"DeBERTa: {len(DEB)} seed(s) averaged")
 base = dict(sorted(base.items()))
 res = pd.DataFrame({n: {"CV RMSE": rmse(np.clip(o, 0, 5), yk), "CV Pearson": pearsonr(o, yk)[0]}
                     for n, (o, _) in base.items()}).T
@@ -266,7 +286,7 @@ code(r"""
 # above is the honest estimate of leaderboard performance.
 full_tr = {}
 for n in names:
-    if n == "F_deberta_finetuned":   full_tr[n] = np.load("features/deberta_train.npy")[ok_tr]  # mean of the 5 fold models
+    if n == "F_deberta_finetuned":   full_tr[n] = deb("train")[ok_tr]  # mean of the fold models (all seeds)
     else:
         make, X_ = FIT[n]; full_tr[n] = make().fit(X_, yk).predict(X_)
 train_fit = np.clip(np.column_stack([full_tr[n] for n in names]) @ wts + b0, 0, 5)
@@ -341,13 +361,15 @@ print(sub.shape, "rows written to submission.csv"); sub.head()
 
 md("## 8. Single-file scorer (`src/predict.py`)")
 md("""The task defines the model as *audio file in → score out*. DeBERTa's five fold models are not stored
-(5 × 0.7 GB), so the deployable scorer stacks the four views that carry the stack in the ablation:
-WavLM-large (A2), the interpretable features with ridge (B) and boosted trees (D), and the LLM states (E).
+(5 × 0.7 GB), so the deployable scorer stacks the views that carry the stack in the ablation:
+WavLM-large with ridge (A2) and SVR (A3), the interpretable features with ridge (B) and boosted trees (D),
+the LLM states (E) and the Whisper encoder SVR (G).
 Each is refitted on all intact training clips and saved with its stack weights to `models/scorer.joblib`;
 `python src/predict.py clip.wav` then needs only the pretrained models, not the competition data.""")
 code(r"""
 import joblib
-DEPLOY = ["A2_wavlm_large_ridge", "B_features_ridge", "D_features_gbm", "E_llm_states_ridge"]
+DEPLOY = ["A2_wavlm_large_ridge", "A3_wavlm_large_svr", "B_features_ridge", "D_features_gbm", "E_llm_states_ridge",
+          "G_whisper_enc_svr"]
 w_d, b_d, _, pred_d = stack([base[n][0] for n in DEPLOY], [base[n][1] for n in DEPLOY], yk)
 oof_d = stack_cv([base[n][0] for n in DEPLOY], yk)
 print(f"deployable scorer, nested CV: RMSE {rmse(oof_d, yk):.4f}  Pearson {pearsonr(oof_d, yk)[0]:.4f}"
@@ -356,7 +378,7 @@ os.makedirs("models", exist_ok=True)
 joblib.dump({"names": DEPLOY, "models": {n: FIT[n][0]().fit(FIT[n][1], yk) for n in DEPLOY},
              "weights": w_d, "intercept": b_d, "features": FEATS, "hnr_gate": HNR_GATE,
              "wavlm": "microsoft/wavlm-large", "wavlm_lo": W_LO["large"],
-             "llm_layer": int(best_d), "test_pred": dict(zip(te.filename, np.where(ok_te, pred_d, 0.0)))},
+             "llm_layer": int(best_d), "whisper_lo": int(lo_w), "test_pred": dict(zip(te.filename, np.where(ok_te, pred_d, 0.0)))},
             "models/scorer.joblib")
 print("saved models/scorer.joblib")
 """)

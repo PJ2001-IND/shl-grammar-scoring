@@ -81,7 +81,7 @@ pytest -q tests/    # data spec, submission validity, train/test key separation,
 
 Re-running the notebook reproduces `submission.csv` byte for byte.
 
-**Final submission:** `final_submission.csv` (identical to `submission.csv`; Kaggle public 0.3486). The
+**Final submission:** `praasuk_jain.csv` (identical to `submission.csv`; Kaggle public 0.3486). The
 `submission_v1`–`v6` files are earlier, superseded submissions kept for the record.
 
 `src/`:
